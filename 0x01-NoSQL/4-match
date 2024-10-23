@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+
+// lists all documents wtih the name `Holberton school` in the collection school
+db.school.find({name:"Holberton school"})
