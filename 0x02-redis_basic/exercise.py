@@ -1,74 +1,92 @@
 #!/usr/bin/env python3
-"""
-Cache class for Redis operations with type recovery.
-"""
+"""Defines a class for interacting with Redis"""
+
+from functools import wraps
 import redis
+from typing import Any, Callable, Union, Optional
 import uuid
-from typing import Union, Callable, Optional
+
+
+def replay(method: Callable) -> None:
+    """Displays the history of calls to `method`.
+    Shows the number of calls, and inputs/outputs of each call
+    """
+    r = redis.Redis(decode_responses=True)
+    key = method.__qualname__
+    count = r.get(key)
+    print(f"{key} was called {count} times:")
+
+    def hist(io):
+        return r.lrange(f"{key}:{io}", 0, -1)
+
+    for arg, res in zip(hist("inputs"), hist("outputs")):
+        print(f"{key}(*{arg}) -> {res}")
+
+
+def count_calls(method: Callable) -> Callable:
+    """Decorator for counting and caching the number of calls to `method`"""
+
+    @wraps(method)
+    def wrapper(*args, **kwargs):
+        key = method.__qualname__
+        ret = method(*args, **kwargs)
+        self = args[0]
+        self._redis.incr(key)
+        return ret
+
+    return wrapper
+
+
+def call_history(method: Callable) -> Callable:
+    """Decorator for storing the arguments and results for `method`"""
+
+    @wraps(method)
+    def wrapper(*args, **kwargs):
+        self = args[0]
+        key_in = f"{method.__qualname__}:inputs"
+        key_out = f"{method.__qualname__}:outputs"
+        self._redis.rpush(key_in, str(args[1:]))
+        ret = method(*args, **kwargs)
+        self._redis.rpush(key_out, ret)
+        return ret
+
+    return wrapper
+
 
 class Cache:
-    """
-    Cache class that interacts with Redis.
-    """
+    """Contains methods for interacting with a redis database"""
+
     def __init__(self):
-        """
-        Initialize Redis client and flush the database.
-        """
         self._redis = redis.Redis()
         self._redis.flushdb()
 
+    @count_calls
+    @call_history
     def store(self, data: Union[str, bytes, int, float]) -> str:
-        """
-        Store data in Redis with a randomly generated key.
+        """Stores data in redis using a random key.
 
         Args:
-            data (Union[str, bytes, int, float]): The data to store in Redis.
+            data -  the variable to store
 
         Returns:
-            str: The generated key.
+            str - the key associated with data in redis
         """
         key = str(uuid.uuid4())
         self._redis.set(key, data)
         return key
 
-    def get(self, key: str, fn: Optional[Callable] = None) -> Union[str, bytes, int, float, None]:
-        """
-        Retrieve data from Redis and apply an optional conversion function.
-
-        Args:
-            key (str): The key of the data to retrieve.
-            fn (Callable, optional): A function to apply to the retrieved data. Defaults to None.
-
-        Returns:
-            Union[str, bytes, int, float, None]: The retrieved data or None if the key does not exist.
+    def get(self, key: str, fn: Optional[Callable] = None) -> Any:
+        """Returns the value stored with `key`.
+        The variable is decoded using the function `fn`
         """
         data = self._redis.get(key)
-        if data is None:
-            return None
-        if fn:
-            return fn(data)
-        return data
 
-    def get_str(self, key: str) -> Optional[str]:
-        """
-        Retrieve a string from Redis.
+        return fn(data) if fn else data
 
-        Args:
-            key (str): The key of the data to retrieve.
+    def get_str(self, key: str) -> str:
+        """Returns a string stored with `key`"""
+        return self.get(key, fn=lambda s: s.decode())
 
-        Returns:
-            Optional[str]: The retrieved data as a string, or None if the key does not exist.
-        """
-        return self.get(key, lambda d: d.decode("utf-8"))
-
-    def get_int(self, key: str) -> Optional[int]:
-        """
-        Retrieve an integer from Redis.
-
-        Args:
-            key (str): The key of the data to retrieve.
-
-        Returns:
-            Optional[int]: The retrieved data as an integer, or None if the key does not exist.
-        """
-        return self.get(key, lambda d: int(d))
+    def get_int(self, key: str) -> int:
+        """Returns an integerr stored with `key`"""
+        return self.get(key, fn=lambda s: int(s.decode()))
