@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+
+// uses or creates my_db
+use my_db
