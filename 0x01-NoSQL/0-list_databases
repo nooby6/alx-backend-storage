@@ -1,0 +1,4 @@
+#!/usr/bin/env mongo
+
+// Connect to MongoDB and list all databases
+db.adminCommand('listDatabases')
